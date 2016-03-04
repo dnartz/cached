@@ -2,6 +2,7 @@
 #define _MASTER_H
 
 #include <thread>
+#include <mutex>
 #include <vector>
 #include <list>
 
@@ -16,6 +17,7 @@
 #include <setting.h>
 #include <connection.h>
 #include <worker.h>
+#include <assoc.h>
 
 namespace cached {
 
@@ -39,7 +41,7 @@ class master {
     unsigned last_worker = 0;
     worker *workers;
 
-    struct ev_loop *evloop = EV_DEFAULT;
+    struct ev_loop *evloop;
 
 public:
     master();

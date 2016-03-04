@@ -11,7 +11,7 @@ include(ExternalProject)
 SET(JEMALLOC_DIR ${CMAKE_SOURCE_DIR}/jemalloc)
 SET(LIBEV_DIR ${CMAKE_SOURCE_DIR}/libev)
 
-include_directories("include" "linenoise")
+include_directories("include" "jemalloc/include/jemalloc")
 
 ExternalProject_Add(libjemalloc
         SOURCE_DIR ${JEMALLOC_DIR}
@@ -34,18 +34,20 @@ set(SERVER_HEADERS
         include/setting.h
         include/common.h
         include/connection.h
-        include/worker.h)
+        include/worker.h
+        include/murmur3.h
+        jemalloc/include/jemalloc/jemalloc.h)
 
 set(SERVER_SOURCE_FILES
         ${SERVER_HEADERS}
         worker.cpp
-        server.cpp connection.cpp)
+        server.cpp connection.cpp assoc.cpp include/murmur3.h murmur3.c)
 
 set(CLIENT_HEADERS
         linenoise/linenoise.h)
 
 set(CLIENT_SOURCE_FILES
-        ${CLIENT_HEADERS} server.cpp)
+        ${CLIENT_HEADERS} server.cpp include/assoc.h)
 
 add_executable(cached-server ${SERVER_SOURCE_FILES})
 add_dependencies(cached-server libev libjemalloc)

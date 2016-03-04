@@ -1,0 +1,9 @@
+.idea
+.DS_Store
+
+*.[ao]
+*.gcov
+*.gcda
+*.gcno
+*.tcov
+.deps

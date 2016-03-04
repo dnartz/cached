@@ -16,8 +16,10 @@ public:
 
     size_t max_key_len = 250;
     size_t max_item_size = 1024 * 1024;
+    size_t max_lru_queue_size = 64 * 1024 * 1024;
 
-    size_t cl_read_buffer_size = 2048;
+    size_t conn_read_buffer_size = 2048;
+    size_t conn_write_buffer_size = 2048;
 
     const char *interface = nullptr;
     const char *listen_addr = "127.0.0.1";

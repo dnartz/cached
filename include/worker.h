@@ -3,6 +3,7 @@
 
 #include <list>
 #include <mutex>
+#include <thread>
 
 #include <ev.h>
 
@@ -15,13 +16,15 @@ class worker {
     int write_pipe;
     ev_io read_pipe_evio;
 
+    std::thread *work_thread;
+
     std::mutex wait_queue_mtx;
     std::list<int> wait_queue;
 
     std::list<connection> conns;
 
 public:
-    struct ev_loop *evloop = EV_DEFAULT;
+    struct ev_loop *evloop;
 
     worker();
 
@@ -30,7 +33,11 @@ public:
 
     void dispatch_new_conn(int fd) noexcept;
 
-    static void recv_new_conn_sig(EV_P_ ev_io *w, int revents) noexcept;
+    static void recv_master_sig(EV_P_ ev_io *w, int revents) noexcept;
+
+    void run_thread();
+
+    static void run(worker& w) noexcept;
 
     void inline remove_conn(connection& conn) noexcept {
         this->conns.erase(++conn.get_prev_iterator());

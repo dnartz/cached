@@ -119,12 +119,17 @@ void master::start_listen() noexcept {
         listener.bind_ev_loop(this->evloop);
     }
 
+    for (int i = 0; i < this->nworker; i++) {
+        this->workers[i].run_thread();
+    }
+
     ev_run(this->evloop, 0);
 }
 
 master::master() :
 workers(new worker[std::thread::hardware_concurrency()]),
-nworker(std::thread::hardware_concurrency())
+nworker(std::thread::hardware_concurrency()),
+evloop(ev_loop_new(EVFLAG_AUTO))
 { }
 
 master::~master()  {

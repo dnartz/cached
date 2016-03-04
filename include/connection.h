@@ -8,6 +8,8 @@
 #include <sys/socket.h>
 #include <ev.h>
 
+#include <assoc.h>
+
 namespace cached {
 
 class worker;
@@ -18,7 +20,6 @@ public:
         WAIT_CMD,
         READ_CMD_BUF,
         PARSE_CMD,
-        WRITE_RESPONSE,
         CLOSED
     };
 
@@ -57,7 +58,7 @@ public:
         APPEND,
         PREPEND,
         REPLACE,
-        NONE
+        DELETE
     };
 
 #define FOREACH_COMMAND(x)\
@@ -67,7 +68,8 @@ public:
     x("gets", connection::cmd_type::GETS)\
     x("append", connection::cmd_type::APPEND)\
     x("prepend", connection::cmd_type::PREPEND)\
-    x("replace", connection::cmd_type::REPLACE)
+    x("replace", connection::cmd_type::REPLACE)\
+    x("delete", connection::cmd_type::DELETE)
 
 private:
     int sfd;
@@ -78,7 +80,7 @@ private:
     char *rbuf;
 
     char *ritem_buf;
-    size_t ritem_used;
+    size_t ritem_saved;
     size_t ritem_buf_len;
 
     size_t r_size;
@@ -87,7 +89,8 @@ private:
     char *wcurr;
     char *wbuf;
     size_t w_size;
-    size_t w_unread;
+    size_t w_unwrite;
+    bool wevent_bound;
 
     conn_state state;
     cmd_parse_state parse_state_curr;
@@ -102,9 +105,36 @@ private:
     uint64_t cmd_cas_key;
     size_t cmd_item_size;
 
-    ev_io evio;
+    ev_io read_evio;
+    ev_io write_evio;
 
     std::list<connection>::iterator prev_iterator;
+
+    void execute_command() noexcept;
+
+    void execute_get(bool return_cas = false) noexcept;
+
+    inline void execute_gets() noexcept {
+        this->execute_get(true);
+    };
+
+    void execute_delete() noexcept;
+
+    void execute_add() noexcept;
+
+    void execute_prepend_or_append(item_ptr &it,
+                                   bucket *&bp,
+                                   bool append) noexcept;
+
+    void execute_replace(item_ptr &it, bucket *&bp) noexcept;
+
+    void execute_cas(item_ptr &it, bucket *&bp) noexcept;
+
+    void wbuf_append(const char *buf, size_t size) noexcept;
+
+    inline void wbuf_append(const char * buf) noexcept {
+        this->wbuf_append(buf, std::strlen(buf));
+    }
 public:
     connection(int fd, worker &w, std::list<connection>::iterator end);
 
@@ -113,21 +143,6 @@ public:
     read_cmd_result try_read_command() noexcept;
 
     cmd_parse_result try_parse_command() noexcept;
-
-    void execute_command() noexcept {
-#define V(cmdstr, cmdenum)\
-        if (this->cmd_curr == cmdenum) {fprintf(stdout, "command name: %s", cmdstr);}
-FOREACH_COMMAND(V)
-#undef V
-        fprintf(stdout, "Keys: ");
-        for (auto k : this->cmd_key) {
-            fprintf(stdout, "%s ", k.c_str());
-        }
-
-        if (this->cmd_curr != cmd_type::GET && this->cmd_curr != cmd_type::GETS)
-            fprintf(stdout, "\nFlags: %d\nExptime: %d\nItemSize: %ld\n",
-                    this->cmd_flag, this->cmd_exptime, this->cmd_item_size);
-    }
 
     template<typename T>
     cmd_parse_result try_parse_number(T &res) noexcept {
@@ -154,8 +169,10 @@ FOREACH_COMMAND(V)
 
     static void drive_machine(EV_P_ ev_io *w, int revents) noexcept;
 
+    static void write_response(EV_P_ ev_io *w, int revents) noexcept;
+
     static inline connection &get_connection(ev_io *w) noexcept {
-        static const auto offset = reinterpret_cast<uint64_t>(&((connection *) 0)->evio);
+        static const auto offset = reinterpret_cast<uint64_t>(&((connection *) 0)->read_evio);
         return *reinterpret_cast<connection *>((uint64_t) (w) - offset);
     }
 

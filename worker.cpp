@@ -1,6 +1,8 @@
 #include <mutex>
 #include <cstdlib>
 #include <cstdio>
+#include <thread>
+#include <functional>
 
 #include <unistd.h>
 #include <sys/uio.h>
@@ -20,12 +22,10 @@ worker::worker() {
     this->read_pipe = p[0];
     this->write_pipe = p[1];
 
-    ev_io_init(&this->read_pipe_evio, worker::recv_new_conn_sig, this->read_pipe, EV_READ);
-
-    ev_io_start(this->evloop, &this->read_pipe_evio);
+    ev_io_init(&this->read_pipe_evio, worker::recv_master_sig, this->read_pipe, EV_READ);
 }
 
-void worker::recv_new_conn_sig(EV_P_ ev_io *evio, int revents) noexcept {
+void worker::recv_master_sig(EV_P_ ev_io *evio, int revents) noexcept {
     static const auto offsetof_ev_io =
             reinterpret_cast<uint64_t>(&((worker *)0)->read_pipe_evio);
 
@@ -36,12 +36,22 @@ void worker::recv_new_conn_sig(EV_P_ ev_io *evio, int revents) noexcept {
     auto nread = read(evio->fd, &buf, 1);
 
     if (nread == 1) {
-        {
-            std::lock_guard<std::mutex> guard(w->wait_queue_mtx);
-            if (!w->wait_queue.empty()) {
-                cfd = w->wait_queue.front();
-                w->wait_queue.pop_front();
-            }
+        switch (buf) {
+            case 'c':
+                {
+                    std::lock_guard<std::mutex> guard(w->wait_queue_mtx);
+                    if (!w->wait_queue.empty()) {
+                        cfd = w->wait_queue.front();
+                        w->wait_queue.pop_front();
+                    }
+                }
+                break;
+
+            case 'p':
+                break;
+
+            default:
+                return;
         }
 
         w->conns.emplace_back(cfd, *w, w->conns.end());
@@ -62,6 +72,17 @@ void worker::dispatch_new_conn(int fd) noexcept {
     if (write(this->write_pipe, "c", 1) != 1) {
         perror("cannot write to worker pipe");
     }
+}
+
+void worker::run_thread() {
+    this->work_thread = new std::thread(worker::run, std::ref(*this));
+    this->work_thread->detach();
+}
+
+void worker::run(worker& w) noexcept {
+    w.evloop = ev_loop_new(EVFLAG_AUTO);
+    ev_io_start(w.evloop, &w.read_pipe_evio);
+    ev_run(w.evloop, 0);
 }
 
 }
