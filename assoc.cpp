@@ -59,6 +59,10 @@ void lru_queue::remove(item_ptr& it) noexcept {
         next->lru_prev = prev;
     }
 
+    if (it == this->head) {
+        this->head = nullptr;
+    }
+
     it->lru_next = nullptr;
     it->lru_prev.reset();
 }
@@ -83,6 +87,10 @@ void bucket::remove(item_ptr& it) {
         next->hash_prev = prev;
     }
 
+    if (it == this->head) {
+        this->head = nullptr;
+    }
+
     it->hash_next = nullptr;
     it->hash_prev.reset();
 }
@@ -95,10 +103,11 @@ item::item(std::string &k,
 key(std::move(k)),
 flags(flags),
 exptime(exptime),
-cas_key(static_cast<uint32_t>(std::rand())),
+created_at(std::time(0)),
+cas_key(0),
 data((char *)je_malloc(data_size)),
 data_size(data_size),
-last_access(static_cast<unsigned int>(std::time(0)))
+last_access(std::time(0))
 {
     static auto& hash_table = hash_table::get_instance();
 

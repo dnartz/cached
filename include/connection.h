@@ -63,33 +63,32 @@ public:
 
 #define FOREACH_COMMAND(x)\
     x("set", connection::cmd_type::SET)\
+    x("cas", connection::cmd_type::CAS)\
     x("add", connection::cmd_type::ADD)\
-    x("get", connection::cmd_type::GET)\
     x("gets", connection::cmd_type::GETS)\
+    x("get", connection::cmd_type::GET)\
     x("append", connection::cmd_type::APPEND)\
     x("prepend", connection::cmd_type::PREPEND)\
     x("replace", connection::cmd_type::REPLACE)\
     x("delete", connection::cmd_type::DELETE)
 
 private:
-    int sfd;
-
     worker &worker_base;
 
-    char *rcurr;
-    char *rbuf;
-
-    char *ritem_buf;
-    size_t ritem_saved;
-    size_t ritem_buf_len;
-
     size_t r_size;
+    char *rbuf;
+    char *rcurr;
     size_t r_unparsed;
 
+    size_t w_size;
     char *wcurr;
     char *wbuf;
-    size_t w_size;
     size_t w_unwrite;
+
+    size_t ritem_saved;
+    size_t ritem_buf_len;
+    char *ritem_buf;
+
     bool wevent_bound;
 
     conn_state state;
@@ -107,8 +106,6 @@ private:
 
     ev_io read_evio;
     ev_io write_evio;
-
-    std::list<connection>::iterator prev_iterator;
 
     void execute_command() noexcept;
 
@@ -136,7 +133,10 @@ private:
         this->wbuf_append(buf, std::strlen(buf));
     }
 public:
-    connection(int fd, worker &w, std::list<connection>::iterator end);
+    int sfd;
+    connection(int fd, worker &w);
+
+    connection(const connection& conn) = delete;
 
     ~connection();
 
@@ -167,6 +167,8 @@ public:
         }
     }
 
+    void shrink();
+
     static void drive_machine(EV_P_ ev_io *w, int revents) noexcept;
 
     static void write_response(EV_P_ ev_io *w, int revents) noexcept;
@@ -174,12 +176,6 @@ public:
     static inline connection &get_connection(ev_io *w) noexcept {
         static const auto offset = reinterpret_cast<uint64_t>(&((connection *) 0)->read_evio);
         return *reinterpret_cast<connection *>((uint64_t) (w) - offset);
-    }
-
-    void shrink();
-
-    inline decltype(prev_iterator) get_prev_iterator() const {
-        return this->prev_iterator;
     }
 };
 

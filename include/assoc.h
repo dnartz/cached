@@ -130,8 +130,9 @@ class item {
 public:
     std::string key;
     char *data;
-    unsigned int exptime;
-    unsigned int last_access;
+    time_t exptime;
+    time_t created_at;
+    time_t last_access;
 
     uint32_t flags;
     uint64_t cas_key;
@@ -152,9 +153,8 @@ public:
          char * data,
          size_t data_size);
 
-    // TODO: 64 rand
     inline void update_cas_key() noexcept {
-        this->cas_key = static_cast<uint64_t>(std::rand());
+        this->cas_key++;
     }
 };
 

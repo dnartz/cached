@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <functional>
 
 #include <ev.h>
 #include <jemalloc.h>
@@ -15,14 +16,14 @@ namespace cached {
 
 static auto setting = setting::get_instance();
 
-connection::connection(int fd, worker &w, std::list<connection>::iterator end) :
-prev_iterator(--end),
+connection::connection(int fd, worker &w) :
 state(connection::conn_state::WAIT_CMD),
 sfd(fd),
 r_size(setting.conn_read_buffer_size),
 w_size(setting.conn_write_buffer_size),
 r_unparsed(0),
 w_unwrite(0),
+ritem_saved(0),
 ritem_buf_len(0),
 ritem_buf(nullptr),
 parse_state_curr(connection::cmd_parse_state::SWALLOW_SPACE),
@@ -30,8 +31,8 @@ next_parse_state(connection::cmd_parse_state::CMD_NAME),
 worker_base(w),
 wevent_bound(false)
 {
-    this->rbuf = new char[this->r_size];
-    this->wbuf = new char[this->w_size];
+    this->rbuf = static_cast<char *>(je_malloc(this->r_size));
+    this->wbuf = static_cast<char *>(je_malloc(this->w_size));
     this->rcurr = this->rbuf;
     this->wcurr = this->wbuf;
 
@@ -55,7 +56,7 @@ void connection::shrink() {
 
     if (this->r_unparsed < this->r_size / 2) {
         this->r_size = std::max(setting.conn_write_buffer_size, this->r_unparsed * 2);
-        this->rbuf = static_cast<char *>(std::realloc(this->rbuf, this->r_size));
+        this->rbuf = static_cast<char *>(je_realloc(this->rbuf, this->r_size));
     }
 
     if (this->w_unwrite > 0) {
@@ -65,7 +66,7 @@ void connection::shrink() {
 
     if (this->w_unwrite < this->w_size / 2) {
         this->w_size = std::max(setting.conn_write_buffer_size, this->w_unwrite * 2);
-        this->wbuf = static_cast<char *>(std::realloc(this->wbuf, this->w_size));
+        this->wbuf = static_cast<char *>(je_realloc(this->wbuf, this->w_size));
     }
 
 }
@@ -111,7 +112,7 @@ void connection::drive_machine(EV_P_ ev_io *w, int revents) noexcept {
                 switch (conn.try_parse_command()) {
                     case cmd_parse_result::ERROR:
                         conn.worker_base.remove_conn(conn);
-                        break;
+                        return;
 
                     case cmd_parse_result::BUF_EMPTY:
                         conn.state = conn_state::READ_CMD_BUF;
@@ -151,7 +152,7 @@ connection::read_cmd_result connection::try_read_command() noexcept {
 
             n_realloc++;
 
-            auto newbuf = static_cast<char *>(std::realloc(this->rbuf, this->r_size * 2));
+            auto newbuf = static_cast<char *>(je_realloc(this->rbuf, this->r_size * 2));
             if (newbuf == NULL) {
                 // TODO
                 return read_cmd_result::MEMORY_ERROR;
@@ -160,7 +161,7 @@ connection::read_cmd_result connection::try_read_command() noexcept {
             remain = this->r_size;
             this->r_size *= 2;
             this->rcurr = newbuf + (this->rcurr - this->rbuf);
-            this->rbuf = this->rcurr;
+            this->rbuf = newbuf;
         }
 
         auto res = read(this->sfd,
@@ -189,7 +190,7 @@ connection::read_cmd_result connection::try_read_command() noexcept {
 // RetrievalCommand:
 //    (get | gets) Key+ \r\n
 connection::cmd_parse_result connection::try_parse_command() noexcept {
-    auto static const setting = setting::get_instance();
+    auto static const & setting = setting::get_instance();
 
     if (this->r_unparsed == 0) {
         return cmd_parse_result::BUF_EMPTY;
@@ -229,8 +230,8 @@ connection::cmd_parse_result connection::try_parse_command() noexcept {
 
             case cmd_parse_state::KEY:
                 if (this->cmd_curr == cmd_type::GET
-                    || this->cmd_curr == cmd_type::DELETE
-                    || this->cmd_curr == cmd_type::GETS)
+                    || this->cmd_curr == cmd_type::GETS
+                    || this->cmd_curr == cmd_type::DELETE)
                 {
                     this->next_parse_state = cmd_parse_state::KEY;
                 } else {
@@ -243,7 +244,8 @@ connection::cmd_parse_result connection::try_parse_command() noexcept {
                         && this->rcurr[1] == '\n')
                     {
                         if (this->cmd_curr == cmd_type::GET
-                            || this->cmd_curr == cmd_type::GETS)
+                            || this->cmd_curr == cmd_type::GETS
+                            || this->cmd_curr == cmd_type::DELETE)
                         {
                             if (key_curr.size() > 0) {
                                 this->cmd_key.push_back(key_curr);
@@ -288,11 +290,7 @@ connection::cmd_parse_result connection::try_parse_command() noexcept {
                 break;
 
             case cmd_parse_state::EXPTIME:
-                if (this->cmd_curr == cmd_type::CAS) {
-                    this->next_parse_state = cmd_parse_state::CAS_KEY;
-                } else {
-                    this->next_parse_state = cmd_parse_state::ITEM_SIZE;
-                }
+                this->next_parse_state = cmd_parse_state::ITEM_SIZE;
 
                 if ((np_result = this->try_parse_number(this->cmd_exptime))
                     == cmd_parse_result::FINISH) {
@@ -304,11 +302,12 @@ connection::cmd_parse_result connection::try_parse_command() noexcept {
                 break;
 
             case cmd_parse_state::CAS_KEY:
-                this->next_parse_state = cmd_parse_state::ITEM_SIZE;
+                this->next_parse_state = cmd_parse_state::ITEM;
 
                 if ((np_result = this->try_parse_number(this->cmd_cas_key))
-                    == cmd_parse_result::FINISH) {
-                    this->parse_state_curr = cmd_parse_state::SWALLOW_SPACE;
+                    == cmd_parse_result::FINISH)
+                {
+                    this->parse_state_curr = cmd_parse_state::SWALLOW_NEW_LINE;
                 } else {
                     return np_result;
                 }
@@ -316,7 +315,11 @@ connection::cmd_parse_result connection::try_parse_command() noexcept {
                 break;
 
             case cmd_parse_state::ITEM_SIZE:
-                this->next_parse_state = cmd_parse_state::ITEM;
+                if (this->cmd_curr == cmd_type::CAS) {
+                    this->next_parse_state = cmd_parse_state::CAS_KEY;
+                } else {
+                    this->next_parse_state = cmd_parse_state::ITEM;
+                }
 
                 if ((np_result = this->try_parse_number(this->cmd_item_size))
                     == cmd_parse_result::FINISH)
@@ -324,13 +327,17 @@ connection::cmd_parse_result connection::try_parse_command() noexcept {
                     if (this->cmd_item_size > setting.max_item_size) {
                         return cmd_parse_result::ERROR;
                     } else {
-                        this->parse_state_curr = cmd_parse_state::SWALLOW_NEW_LINE;
+                        if (this->cmd_curr == cmd_type::CAS) {
+                            this->parse_state_curr = cmd_parse_state::SWALLOW_SPACE;
+                        } else {
+                            this->parse_state_curr = cmd_parse_state::SWALLOW_NEW_LINE;
+                        }
 
                         this->ritem_saved = 0;
                         if (this->cmd_item_size != this->ritem_buf_len) {
                             this->ritem_buf =
                                     static_cast<char *>(
-                                            std::realloc(this->ritem_buf,
+                                            je_realloc(this->ritem_buf,
                                                          this->cmd_item_size));
                             if (this->ritem_buf == NULL) {
                                 return cmd_parse_result::ERROR;
@@ -427,8 +434,8 @@ connection::cmd_parse_result connection::try_parse_command() noexcept {
 void connection::execute_command() noexcept {
     static auto &hash_table = hash_table::get_instance();
 
-    item_ptr it;
     bucket * bp;
+
     if (this->cmd_curr == cmd_type::GET) {
         this->execute_get(false);
     } else if (this->cmd_curr == cmd_type::GETS) {
@@ -436,7 +443,7 @@ void connection::execute_command() noexcept {
     } else if (this->cmd_curr == cmd_type::DELETE) {
         this->execute_delete();
     } else {
-        it = hash_table.find_item(this->cmd_key[0], bp);
+        auto it = hash_table.find_item(this->cmd_key[0], bp);
         if (!it) {
             if (this->cmd_curr == cmd_type::SET
                 || this->cmd_curr == cmd_type::ADD)
@@ -448,6 +455,8 @@ void connection::execute_command() noexcept {
 
             return;
         }
+
+        it->last_access = std::time(0);
 
         if (this->cmd_curr == cmd_type::CAS) {
             this->execute_cas(it, bp);
@@ -556,9 +565,10 @@ void connection::execute_cas(item_ptr &it, bucket *&bp) noexcept {
         } else {
             std::memmove(it->data, this->ritem_buf, this->ritem_buf_len);
             it->data_size = this->ritem_buf_len;
+            this->wbuf_append("STORED\r\n");
         }
     } else {
-        this->wbuf_append("NOT_STORED\r\n");
+        this->wbuf_append("EXISTS\r\n");
     }
 
     bp->unlock();
@@ -580,6 +590,8 @@ noexcept
         }
 
         it->data_size += this->ritem_buf_len;
+
+        this->wbuf_append("STORED\r\n");
     }
 
     bp->unlock();
@@ -619,7 +631,7 @@ void connection::wbuf_append(const char *buf, size_t size) noexcept {
     }
 
     if (this->w_unwrite + size > this->w_size) {
-        auto new_ptr = std::realloc(this->wbuf, this->w_size + size);
+        auto new_ptr = je_realloc(this->wbuf, this->w_size + size);
         if (!new_ptr) {
             return;
         }
@@ -669,9 +681,16 @@ void connection::write_response(EV_P_ ev_io *w, int revents) noexcept {
 }
 
 connection::~connection() {
-    close(this->sfd);
-    delete this->rbuf;
-    delete this->wbuf;
+    ev_io_stop(this->worker_base.evloop, &this->read_evio);
+    ev_io_stop(this->worker_base.evloop, &this->write_evio);
+
+    if (this->sfd >= 0) {
+        close(this->sfd);
+    }
+
+    je_free(this->ritem_buf);
+    je_free(this->rbuf);
+    je_free(this->wbuf);
 }
 
 }

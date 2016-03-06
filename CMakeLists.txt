@@ -3,9 +3,6 @@ project(cached)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free")
 
-set(BOOST_USE_STATIC_LIBS ON)
-find_package(Boost REQUIRED)
-
 include(ExternalProject)
 
 SET(JEMALLOC_DIR ${CMAKE_SOURCE_DIR}/jemalloc)
@@ -23,7 +20,7 @@ ExternalProject_Add(libjemalloc
 
 ExternalProject_Add(libev
         SOURCE_DIR ${LIBEV_DIR}
-        CONFIGURE_COMMAND sh ./autogen.sh && ./configure
+        CONFIGURE_COMMAND ./autogen.sh && ./configure
         BUILD_COMMAND make CFLAGS='-std=c99'
         BUILD_IN_SOURCE 1
         INSTALL_COMMAND "")
@@ -43,17 +40,9 @@ set(SERVER_SOURCE_FILES
         worker.cpp
         server.cpp connection.cpp assoc.cpp include/murmur3.h murmur3.c)
 
-set(CLIENT_HEADERS
-        linenoise/linenoise.h)
-
-set(CLIENT_SOURCE_FILES
-        ${CLIENT_HEADERS} server.cpp include/assoc.h)
-
 add_executable(cached-server ${SERVER_SOURCE_FILES})
 add_dependencies(cached-server libev libjemalloc)
 
 target_link_libraries(cached-server ${LIBEV_DIR}/.libs/libev.a ${JEMALLOC_DIR}/lib/libjemalloc.a)
 
-add_executable(cached-cli ${CLIENT_SOURCE_FILES})
-add_dependencies(cached-server libev)
 target_link_libraries(cached-server ${LIBEV_DIR}/.libs/libev.a)

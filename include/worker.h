@@ -4,6 +4,7 @@
 #include <list>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 
 #include <ev.h>
 
@@ -21,7 +22,7 @@ class worker {
     std::mutex wait_queue_mtx;
     std::list<int> wait_queue;
 
-    std::list<connection> conns;
+    std::unordered_map<int, connection> conns;
 
 public:
     struct ev_loop *evloop;
@@ -40,7 +41,7 @@ public:
     static void run(worker& w) noexcept;
 
     void inline remove_conn(connection& conn) noexcept {
-        this->conns.erase(++conn.get_prev_iterator());
+        this->conns.erase(conn.sfd);
     }
 };
 

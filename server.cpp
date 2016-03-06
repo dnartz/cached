@@ -134,7 +134,7 @@ evloop(ev_loop_new(EVFLAG_AUTO))
 
 master::~master()  {
     ev_loop_destroy(this->evloop);
-    delete this->workers;
+    delete [] this->workers;
 }
 
 }

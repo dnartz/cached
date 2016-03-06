@@ -54,7 +54,9 @@ void worker::recv_master_sig(EV_P_ ev_io *evio, int revents) noexcept {
                 return;
         }
 
-        w->conns.emplace_back(cfd, *w, w->conns.end());
+        w->conns.emplace(std::piecewise_construct,
+                         std::make_tuple(cfd),
+                         std::make_tuple(cfd, std::ref(*w)));
     } else if (nread == 0) {
         fprintf(stderr, "unexpected pipe close");
         exit(1);
